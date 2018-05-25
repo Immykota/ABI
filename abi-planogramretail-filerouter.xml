@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:tls="http://www.mulesoft.org/schema/mule/tls" xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.1.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd">
+
+     <flow name="define-http-header-property-flow">
+        <set-property propertyName="Access-Control-Allow-Origin" value="*" doc:name="Access-Control-Allow-Origin"/>
+        <set-property propertyName="Access-Control-Allow-Methods" value="POST" doc:name="Access-Control-Allow-Methods"/>
+        <set-property propertyName="Access-Control-Allow-Headers" value="accept,content-type,HeaderTraceId" doc:name="Access-Control-Allow-Headers"/>
+    </flow>
+    <sub-flow name="ExtractHeaderPropertiesSubflow">
+        <expression-component doc:name="Extract the http header properties"><![CDATA[if(message.inboundProperties.'X-Trace-Id' != null){
+	sessionVars.traceId = message.inboundProperties.'X-Trace-Id' + " " + message.id;
+} else{
+	sessionVars.traceId = message.inboundProperties.'http.remote.address' + " " + message.id;
+}]]></expression-component>
+    </sub-flow>
+    <flow name="abi-planogramretail-filerouter-main">
+        <http:listener config-ref="abi-planogramretail-filerouter-httpListenerConfig" path="/api/${api.version}/*" doc:name="HTTP"/>
+         <flow-ref name="define-http-header-property-flow" doc:name="define-http-header-property-flow"/>
+        <flow-ref name="ExtractHeaderPropertiesSubflow" doc:name="ExtractHeaderPropertiesSubflow"/>
+        <logger level="INFO" doc:name="Print Request Properties"  message="Trace Id = #[sessionVars.traceId] , Message received from remote address =  #[message.inboundProperties.'http.remote.address'] ,  Requested path = #[message.inboundProperties.'http.request.path'] ,Last four char of Client id = #[message.inboundProperties.'http.query.params'.client_id.substring(message.inboundProperties.'http.query.params'.client_id.length() - 4)], Http method = #[message.inboundProperties.'http.method']" />
+
+       
+        <apikit:router config-ref="abi-planogramretail-filerouter-config" doc:name="APIkit Router"/>
+        <exception-strategy ref="abi-planogramretail-filerouter-apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
+    </flow>
+    <flow name="abi-planogramretail-filerouter-console">
+        <http:listener config-ref="abi-planogramretail-filerouter-httpListenerConfig" path="/console/*" doc:name="HTTP"/>
+        <apikit:console config-ref="abi-planogramretail-filerouter-config" doc:name="APIkit Console"/>
+    </flow>
+    <flow name="post:/filerouter/deleteBlob:abi-planogramretail-filerouter-config">
+        <logger message="Trace Id = #[sessionVars.traceId] , Start of delete blob" level="INFO"  doc:name="Start log"/>
+         <dw:transform-message doc:name="TransformMessageFromJsonToObject">
+                    <dw:set-payload resource="classpath:dataweave/TransformJsonToObject.dwl"/>
+                </dw:transform-message>
+        <vm:outbound-endpoint exchange-pattern="one-way" path="queue.delete" doc:name="VM"/>
+        <logger message="Trace Id = #[sessionVars.traceId] , End of delete  blob async" level="INFO"  doc:name="End log"/>
+        <set-payload value="{
+  &quot;message&quot;:&quot;Request successfully received&quot;
+}" doc:name="Set Payload"/>  </flow>
+    <flow name="post:/filerouter/blobexistindirectory:abi-planogramretail-filerouter-config">
+        <logger message="Trace Id = #[sessionVars.traceId] , Start of check all Blobs in direcotry" level="INFO"  doc:name="Start log"/>
+        <flow-ref name="ListBlobsInDirectoryOrchestratorFlow" doc:name="ListBlobsInDirectoryOrchestratorFlow"/>
+        <logger message="Trace Id = #[sessionVars.traceId] , End of check Blobs in direcotry" level="INFO"  doc:name="End log"/> </flow>
+    <flow name="post:/filerouter/compressor:abi-planogramretail-filerouter-config">
+       <logger message="Trace Id = #[sessionVars.traceId] , Start of compressor" level="INFO"  doc:name="Start log"/>
+        <flow-ref name="CompressBlobsOrchestratorFlow" doc:name="CompressBlobsOrchestratorFlow"/>
+        <logger message="Trace Id = #[sessionVars.traceId] , End of compressor" level="INFO"  doc:name="End log"/>
+</flow>
+    <apikit:mapping-exception-strategy name="abi-planogramretail-filerouter-apiKitGlobalExceptionMapping">
+        <apikit:mapping statusCode="404">
+            <apikit:exception value="org.mule.module.apikit.exception.NotFoundException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Resource not found&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="405">
+            <apikit:exception value="org.mule.module.apikit.exception.MethodNotAllowedException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Method not allowed&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="415">
+            <apikit:exception value="org.mule.module.apikit.exception.UnsupportedMediaTypeException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Unsupported media type&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="406">
+            <apikit:exception value="org.mule.module.apikit.exception.NotAcceptableException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Not acceptable&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="400">
+            <apikit:exception value="org.mule.module.apikit.exception.BadRequestException" />
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{ &quot;message&quot;: &quot;Bad request, #[?exception.getMessage().toString().replace(&quot;\&quot;&quot;, &quot;\\\&quot;&quot;).replaceAll(&quot;(\\r|\\n|\\r\\n)+&quot;, &quot;&quot;)]&quot; }" doc:name="Set Payload"/>
+        </apikit:mapping>
+        <apikit:mapping statusCode="500">
+            <apikit:exception value="java.lang.Exception" />
+
+            <set-property propertyName="Content-Type" value="application/json" doc:name="Property"/>
+            <set-payload value="{     &quot;Message&quot;: &quot;Generic Error &quot; ,   &quot;ErrorMessage&quot;: &quot;#[exception.message] &quot;    }" doc:name="Set Payload" mimeType="application/json"/>
+            <async doc:name="Async">
+                <flow-ref name="GlobalNotificationHandlingFlow" doc:name="GlobalNotificationHandlingFlow"/>
+            </async>
+            <logger message="Trace Id = #[sessionVars.traceId] , The returned Payload is : #[payload]" level="INFO" doc:name="Error log" />
+		</apikit:mapping>
+    </apikit:mapping-exception-strategy>
+</mule>

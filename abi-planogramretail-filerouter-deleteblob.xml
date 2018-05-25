@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+<sub-flow name="DeleteBlobSubflow">
+        <expression-component doc:name="Extract the detail to from Url"><![CDATA[flowVars.hostName =payload.split('//')[1].split('/')[0]; // retrieve the hostname from request
+
+// Extract and form rest of the uri params
+String[] extractUri= payload.split('//')[1].split('/');  
+flowVars.uri  = "/";
+for(int i = 1;  i < extractUri.length; i++){
+ if(i ==extractUri.length-1 ){
+ flowVars.uri =  flowVars.uri + extractUri[i] 
+}else{
+  flowVars.uri =  flowVars.uri + extractUri[i] +'/';
+}
+}]]></expression-component>
+        <logger message="Trace Id = #[sessionVars.traceId] , Start of deletion process" level="INFO"  doc:name="Start log"/>
+        <until-successful maxRetries="${maxNoOfRetryAttemptForCallOutService}" millisBetweenRetries="${maxDurationInMsBetweenRetry}" failureExpression="#[header:INBOUND:http.status != 202]" doc:name="Try calling the Azure Blob API for Max Retry Count" synchronous="true">
+            <http:request config-ref="HTTP_Request_Configuration" path="#[flowVars.uri]" method="DELETE" doc:name="Azure Blob Delete Api">
+                <http:request-builder>
+                    <http:query-params expression="#[flowVars.hmAccessParams]"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
+        <logger message="Trace Id = #[sessionVars.traceId] , End of deletion process" level="INFO"  doc:name="End log"/>
+    </sub-flow>
+    <sub-flow name="GenerateSecuritySigMapSubflow">
+        <scripting:component doc:name="Consturct the azure access signature">
+            <scripting:script engine="Groovy"><![CDATA[// retrieve the fixed secure access signature properties file
+def azureAccessSignatue = ${azureAPIAccessSignature};
+def mainList = [];
+def hmQueryParam = [:];
+// Split the get each query params.
+mainList = azureAccessSignatue.split('&');
+for (rec in mainList){
+	def subList = [];
+	subList = rec.split('=');
+	// Replace the escape sequence with actual charactor
+	hmQueryParam.put(subList[0],subList[1].replaceAll('%3A',':').replaceAll('%2B','+').replaceAll('%3D','=').replaceAll('%2F','/'));
+}
+return hmQueryParam;]]></scripting:script>
+        </scripting:component>
+
+    </sub-flow>
+ <flow name="FileRouterDeleteBlobOrchestratorFlow" processingStrategy="synchronous">
+        <vm:inbound-endpoint exchange-pattern="one-way" path="queue.delete" doc:name="Retrieve message from delete VMQ"/>
+        <!-- <dw:transform-message doc:name="TransformMessageToConvertJsonToObject" metadata:id="b3e0792d-cc26-4f0f-81be-4a8949313a93">
+			<dw:set-payload resource="classpath:dataweave/TransformJsonToObject.dwl"/>
+        </dw:transform-message> -->
+        <foreach collection="payload.urls" doc:name="For Each" counterVariableName="deleteCounter">
+            <enricher target="#[flowVars.hmAccessParams]" doc:name="Message Enricher">
+                <flow-ref name="GenerateSecuritySigMapSubflow" doc:name="GenerateSecuritySigMapSubflow"/>
+            </enricher>
+            <flow-ref name="ListBlobsInDirectorySubflow" doc:name="ListBlobsInDirectorySubflow"/>
+            <set-payload value="#[xpath://Url]" doc:name="Get all the blob Urls for delete"/>
+            <choice doc:name="Blob exists for deletion">
+                <when expression="#[payload instanceof String]">
+                    <flow-ref name="DeleteBlobSubflow" doc:name="DeleteBlobSubflow"/>
+
+                </when>
+                <when expression="#[payload != null]">
+                    <foreach doc:name="For Each">
+                        <flow-ref name="DeleteBlobSubflow" doc:name="DeleteBlobSubflow"/>
+                    </foreach>
+                </when>
+                <otherwise>
+                    <logger message="Trace Id = #[sessionVars.traceId] , No blobs to delete in path #[flowVars.preFix]" level="INFO"  doc:name="No blobs to delete in th folder"/>
+                </otherwise>
+            </choice>
+
+
+        </foreach>
+        <exception-strategy ref="GlobalChoiceExceptionStrategy" doc:name="Reference Exception Strategy"/>
+
+    </flow>
+</mule>

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+<sub-flow name="ListBlobsInDirectorySubflow">
+        <logger message="Trace Id = #[sessionVars.traceId] , Start of List blob call" level="INFO"  doc:name="Start log"/>
+        <expression-component doc:name="Get the query params to call the azure service"><![CDATA[flowVars.hostName = payload.url.split('//')[1].split('/')[0]; // retrieve the URL
+flowVars.container = payload.url.split('//')[1].split('/')[1]; // retrieve the azure container
+//retrieve and generate the query params
+String[] extractedPrefix=  payload.url.split('//')[1].split('/');
+//prefix to filter the search criteria
+flowVars.preFix  = "";
+for(int i = 2;  i < extractedPrefix.length; i++){
+			flowVars.preFix = flowVars.preFix + extractedPrefix[i] + "/";
+}
+]]></expression-component>
+        <until-successful maxRetries="${maxNoOfRetryAttemptForCallOutService}" millisBetweenRetries="${maxDurationInMsBetweenRetry}" failureExpression="#[header:INBOUND:http.status != 200]" doc:name="Try calling the Azure Blob API for Max Retry Count" synchronous="true">
+            <http:request config-ref="HTTP_Request_Configuration" path="#[flowVars.container]" method="GET" doc:name="Azure list blob in a directory Service">
+                <http:request-builder>
+                    <http:query-param paramName="restype" value="container"/>
+                    <http:query-param paramName="comp" value="list"/>
+                    <http:query-param paramName="prefix" value="#[flowVars.preFix]"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
+        <object-to-string-transformer encoding="UTF-8" mimeType="application/xml" doc:name="Object to String"/>
+        <logger message="Trace Id = #[sessionVars.traceId] , End of List blob call" level="INFO"  doc:name="End log"/>
+    </sub-flow>
+    <flow name="ListBlobsInDirectoryOrchestratorFlow">
+        <dw:transform-message doc:name="TransformMessageToConvertJsonToObject">
+                    <dw:set-payload resource="classpath:dataweave/TransformJsonToObject.dwl"/>
+                </dw:transform-message>
+        <expression-component doc:name="Save Payload"><![CDATA[//Initilize the retrieved file list
+flowVars.azureFileList = new java.util.ArrayList();
+// Save the payload
+flowVars.savePayload = payload;]]></expression-component>
+        <foreach collection="payload.project" doc:name="For Each">
+            <flow-ref name="ListBlobsInDirectorySubflow" doc:name="ListBlobsInDirectorySubflow"/>
+            <set-payload value="#[xpath://Name]" doc:name="Get the file Name"/>
+            <scripting:component doc:name="Add retrieved file to  final list">
+                <scripting:script engine="Groovy"><![CDATA[//store all filename in the for each loop
+if(payload != null){
+	flowVars.azureFileList.addAll(payload);
+}]]></scripting:script>
+            </scripting:component>
+        </foreach>
+        <scripting:component doc:name="Final Payload">
+            <scripting:script engine="Groovy"><![CDATA[//check if file exists in the perticular directory
+def lFinalPayload =[];
+for (rec in payload.project){
+		def iPath = rec.url.split('//')[1].split('/')
+		def path = '';
+		for (i = 2; i < iPath.size(); i++){
+			path = path +	iPath[i] + '/';
+		}
+		for (blobName in rec.blobNames ){
+			if (flowVars.azureFileList.contains(path + blobName.get('blobName'))){
+				blobName.put('status','Y');
+			}else{
+				blobName.put('status','N');
+				}
+		}
+		lFinalPayload.add(rec);
+		payload.put('project',lFinalPayload);
+}
+
+return payload;]]></scripting:script>
+        </scripting:component>
+        <message-properties-transformer scope="invocation"
+				doc:name="Remove all variables">
+				<delete-message-property key="savePayload" />
+				<delete-message-property key="container" />
+				<delete-message-property key="preFix" />
+				<delete-message-property key="azureFileList" />
+			</message-properties-transformer>
+
+
+
+    </flow>
+</mule>
