@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit"
+	xmlns:tls="http://www.mulesoft.org/schema/mule/tls"
+	xmlns:api-platform-gw="http://www.mulesoft.org/schema/mule/api-platform-gw" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:secure-property-placeholder="http://www.mulesoft.org/schema/mule/secure-property-placeholder"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:smtp="http://www.mulesoft.org/schema/mule/smtp"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/secure-property-placeholder http://www.mulesoft.org/schema/mule/secure-property-placeholder/current/mule-secure-property-placeholder.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
+http://www.mulesoft.org/schema/mule/smtp http://www.mulesoft.org/schema/mule/smtp/current/mule-smtp.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/api-platform-gw http://www.mulesoft.org/schema/mule/api-platform-gw/current/mule-api-platform-gw.xsd">
+<http:request-config name="HTTP_Request_Configuration" host="#[flowVars.hostName]"  doc:name="HTTP Request Configuration"  protocol="HTTPS" connectionIdleTimeout="${http.requester.connection.idle.timeout}" basePath="/" port="${https.requester.port}" responseTimeout="${http.requester.response.timeout}"/>
+<smtp:connector name="SMTP" contentType="text/html" validateConnections="true" doc:name="SMTP">
+        <reconnect frequency="${smtp.reconnectFrequency}" count="${smtp.reconnectionAttempt}"/>
+</smtp:connector>
+    <secure-property-placeholder:config name="Secure_Property_Placeholder" encryptionAlgorithm="Blowfish" key="${encrypt.key}" location="mule.${mule.env}.properties" doc:name="Secure Property Placeholder"/>
+    <api-platform-gw:api apiName="${api.name}" version="${api.version}" flowRef="abi-planogramretail-filerouter-main" create="true" apikitRef="abi-planogramretail-filerouter-config" doc:name="API Autodiscovery">
+        <api-platform-gw:description>${api.description}</api-platform-gw:description>
+    </api-platform-gw:api>
+    <http:listener-config name="abi-planogramretail-filerouter-httpListenerConfig" host="0.0.0.0" port="${https.port}" doc:name="HTTP Listener Configuration" protocol="HTTPS" connectionIdleTimeout="${http.listener.response.timeout}">
+        <tls:context>
+            <tls:key-store type="jks" path="${tls.path}" keyPassword="${tls.KeyPassword}" password="${tls.Password}"/>
+        </tls:context>
+    </http:listener-config>
+    <apikit:config name="abi-planogramretail-filerouter-config" raml="abi-planogramretail-filerouter.raml" consoleEnabled="false" doc:name="Router"/>
+   
+
+</mule>

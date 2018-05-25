@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting" xmlns:smtp="http://www.mulesoft.org/schema/mule/smtp"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/smtp http://www.mulesoft.org/schema/mule/smtp/current/mule-smtp.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd">
+<flow name="GlobalNotificationHandlingFlow">
+        <logger message="Trace Id = #[sessionVars.traceId] , Start of Send email application" level="INFO"  doc:name="Start log"/>
+        <expression-component doc:name="Format error message"><![CDATA[StringBuffer sbPayload = new StringBuffer();
+sbPayload.append("Traceability Id : " + sessionVars.traceId);
+sbPayload.append("\n\n");
+sbPayload.append("Error Summary : \n" + exception.getSummaryMessage());
+payload = sbPayload;]]></expression-component>
+        <!-- <smtp:outbound-endpoint connector-ref="SMTP" doc:name="Send Notification" from="${mail.from}" host="${smtp.host}" password="${smtp.password}" port="${smtp.port}" responseTimeout="10000" subject="${mail.subject}" to="${mail.to}" user="${smtp.user}" />
+         -->
+         <smtp:outbound-endpoint connector-ref="SMTP" doc:name="Send Notification" from="${mail.from}" host="${smtp.host}"  port="${smtp.port}" responseTimeout="10000" subject="#[ ' (' + '${mule.env}' + ')'+ ' Error in ' + app.name]" to="${mail.to}"  />
+         <logger message="Trace Id = #[sessionVars.traceId] , End of Send email application" level="INFO"  doc:name="End log"/>
+        <choice-exception-strategy doc:name="Choice Exception Strategy">
+            <catch-exception-strategy doc:name="Catch Exception Strategy">
+                <logger message="Trace Id = #[sessionVars.traceId] , Exception occured  in notification handler :: Cause :: #[exception.causeException]" level="INFO" doc:name="Log Error" />
+            </catch-exception-strategy>
+        </choice-exception-strategy>
+        </flow>
+</mule>

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:json="http://www.mulesoft.org/schema/mule/json"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+<flow name="CompressBlobsOrchestratorFlow">
+       <dw:transform-message doc:name="TransformMessageFromJsonToObject">
+                    <dw:set-payload resource="classpath:dataweave/TransformJsonToObject.dwl"/>
+                </dw:transform-message>
+        <scripting:component doc:name="Transform Payload to Azure PowerShell format">
+            <scripting:script engine="Groovy"><![CDATA[//Method to create target file name with time stamp 
+def createCompressedFileTimeStand() { 
+  TimeZone.setDefault(TimeZone.getTimeZone('UTC'));
+  return "__" + new  Date().format("yyyyMMdd'T'HHmmss.SSS") + " GMT.zip";
+}
+// Collect all the url from input in a hasmap
+def hmSubPrjName = [:];
+//Retrieve Azure outbount url from property file
+def azureOutboundServiceHostUrl = ${AzureOutboundServiceHostUrl};
+def parentPrjName ="";
+for (rec in payload.blobUrls){
+	def lProject = rec.blobUrl.split('//')[1].split('/');
+	parentPrjName = lProject[lProject.size()-3];
+	def subPrjName = lProject[lProject.size()-2];
+	if(hmSubPrjName.get(subPrjName) != null){
+		hmSubPrjName.get(subPrjName).add(rec.blobUrl);
+	}else {
+		def list = [];
+		list.add(rec.blobUrl);
+		hmSubPrjName.put(subPrjName,list);
+	}
+}
+
+// Create the final payload to be sent to compression service
+def hmParent = [:];
+def lParent = [];
+def lSubDirectories = [];
+for (keys in hmSubPrjName.keySet()){
+	def lBlobUrls = [];
+	 for(url in hmSubPrjName.get(keys)){
+		def hmBlobUrls = [:];
+		hmBlobUrls.put("blobUrl",url);
+		lBlobUrls.add(hmBlobUrls);
+	 }
+	 def hmSubDirectories = [:];
+	 hmSubDirectories.put("subDirectory",keys);
+	 hmSubDirectories.put("blobUrls",lBlobUrls);
+	 lSubDirectories.add(hmSubDirectories);
+}
+//Target urls where file will be placed
+hmParent.put("targetURL",azureOutboundServiceHostUrl + parentPrjName + createCompressedFileTimeStand());
+//Target subDirectories details
+hmParent.put("subDirectories",lSubDirectories);
+return hmParent;]]></scripting:script>
+        </scripting:component>
+        <json:object-to-json-transformer doc:name="Object to JSON" mimeType="application/json"/>
+        <expression-component doc:name="get the parameters to call the post service"><![CDATA[flowVars.hostName  = "${AzurePowerShellScriptHost}";
+flowVars.uriParams = "${AzurePowerShellScriptUriParams}";
+flowVars.hmQueryParams = ${AzurePowerShellScriptQueryParamsMap}
+]]></expression-component>
+        <logger message="Trace Id = #[sessionVars.traceId] , Start of Azure Compression Service" level="INFO"  doc:name="Start log of Azure Compression Service"/>
+        <http:request config-ref="HTTP_Request_Configuration" path="#[flowVars.uriParams]" method="POST" doc:name="Azure PowerShell Compression service">
+            <http:request-builder>
+                <http:query-params expression="#[flowVars.hmQueryParams]"/>
+            </http:request-builder>
+        </http:request>
+
+        <object-to-string-transformer mimeType="application/json" doc:name="Object to String"/>
+        <logger message="Trace Id = #[sessionVars.traceId] ,End of Azure Compression service" level="INFO"  doc:name="End log of Azure Compression Service"/>
+    </flow>
+</mule>
